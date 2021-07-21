@@ -1,0 +1,17 @@
+{
+    "name": "w1p/lumen-yunxin",
+    "description": "sdk for lumen",
+    "type": "library",
+    "authors": [
+        {
+            "name": "w1p",
+            "email": "wangyipingyouxiang@163.com"
+        }
+    ],
+    "require": {},
+    "autoload": {
+        "psr-4": {
+            "W1p\\LumenYunxin\\": "src/"
+        }
+    }
+}
