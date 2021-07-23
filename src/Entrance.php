@@ -3,8 +3,9 @@
 namespace W1p\LumenYunxin;
 
 use W1p\LumenYunxin\Api\Chat;
-use W1p\LumenYunxin\Api\ChatRoom;
 use W1p\LumenYunxin\Api\User;
+use W1p\LumenYunxin\Api\Friend;
+use W1p\LumenYunxin\Api\ChatRoom;
 
 class Entrance
 {
@@ -64,6 +65,19 @@ class Entrance
         $key = 'ChatRoom';
         if (!array_key_exists($key, $this->instances)) {
             $chatRoom = new ChatRoom($this->appKey, $this->appSecrt);
+            $this->instances[$key] = $chatRoom;
+        }
+        return $this->instances[$key];
+    }
+
+    /**
+     * @return Friend
+     */
+    public function friend()
+    {
+        $key = 'friend';
+        if (!array_key_exists($key, $this->instances)) {
+            $chatRoom = new Friend($this->appKey, $this->appSecrt);
             $this->instances[$key] = $chatRoom;
         }
         return $this->instances[$key];

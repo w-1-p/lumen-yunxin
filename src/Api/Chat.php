@@ -3,1325 +3,374 @@
 namespace W1p\LumenYunxin\Api;
 
 use GuzzleHttp\Exception\GuzzleException;
-use W1p\LumenYunxin\Exception\YunXinArgExcetption;
-use W1p\LumenYunxin\Exception\YunXinBusinessException;
 use W1p\LumenYunxin\Exception\YunXinInnerException;
 use W1p\LumenYunxin\Exception\YunXinNetworkException;
+use W1p\LumenYunxin\Exception\YunXinBusinessException;
 
 class Chat extends Base
 {
-    const CHAT_SEND_LIMIT = 500;
-
-    const CHAT_ATTACH_MSG_PUSH_CONTENT_LIMIT = 500;
-    const CHAT_ATTACH_MSG_ATTACH_LIMIT = 4096;
-    const CHAT_ATTACH_MSG_PAYLOAD_LIMIT = 2000;
-
-    const CHAT_ONT_TO_ONE = 0;
-    const CHAT_ONT_TO_GROUP = 1;
-    const CHAT_MSG_BODY_LIMIT = 5000;
-
-    const ONE_DAY_SECONDS = 24 * 60 * 60;
-
-    const FILE_UPLOAD_TAG_LIMIT = 32;
-
-    const RECALL_TYPE_ONE_TO_ONE = 7;
-    const RECALL_TYPE_ONE_TO_GROUP = 8;
+    const MSG_TYPE_TEXT = 0; // 文本类型
+    const MSG_TYPE_IMAGE = 1; // 图片消息
+    const MSG_TYPE_VOICE = 2; // 语音消息
+    const MSG_TYPE_VIDEO = 3; // 视频消息
+    const MSG_TYPE_LOCATION = 4; // 地理位置消息
+    const MSG_TYPE_FILE = 6; // 文件消息
+    const MSG_TYPE_CUSTOM = 100; // 自定义消息
 
     /**
      * 发送普通消息
      *
-     * @param string $accidFrom
-     * @param string $accidTo
-     * @param int $open 0：点对点个人消息，1：群消息（高级群），其他返回414
-     * @param int $type
-     * @param string $body 最大长度5000字符，为一个JSON串
-     * @param bool $antispam
-     * @param array $antispamCustom
-     * @param string $option
-     * @param string $pushContent
-     * @param array $payload
-     * @param string $ext
-     * @param array $forcePushList
-     * @param string $forcePushContent
-     * @param bool $forcePushAll
-     * @param string $bid
-     * @param int $useYidun
-     * @param int $markRead
-     * @param bool $checkFriend
+     * @param string $from 发送者accid，用户帐号，最大32字符，必须保证一个APP内唯一
+     * @param int $ope 类型 0：点对点个人消息，1：群消息（高级群），其他返回414
+     * @param string $to ope==0是表示accid即用户id，ope==1表示tid即群id
+     * @param int $type 消息类型 对应self::MSG_TYPE_*
+     * @param string $body 消息内容，最大长度5000字符，JSON格式
+     * @param array $options 可选参数集合，支持如下：
+     *
+     * - antispam: bool, 对于对接了易盾反垃圾功能的应用，本消息是否需要指定经由易盾检测的内容（antispamCustom）。true或false, 默认false。
+     *   只对消息类型为：100 自定义消息类型 的消息生效。
+     *
+     * - option: string, 指定消息的漫游，存云端历史，发送方多端同步，推送，消息抄送等特殊行为,使用 self::chatOption
+     *
+     * - pushcontent: string, 推送文案,最长500个字符，android以此为推送显示文案；ios若未填写payload，显示文案以pushcontent为准
+     * - payload: sting, ios 推送对应的payload,必须是JSON,不能超过2k字符
+     *
+     * - ext: string, 开发者扩展字段，长度限制1024字符
+     *
+     * - forcepushlist: string, 发送群消息时的强推用户列表（云信demo中用于承载被@的成员），格式为JSONArray，如["accid1","accid2"]。
+     *   若forcepushall为true，则forcepushlist为除发送者外的所有有效群成员
+     *
+     * - forcepushcontent: string, 发送群消息时，针对强推列表forcepushlist中的用户，强制推送的内容
+     *
+     * - forcepushall: bool, 发送群消息时，强推列表是否为群里除发送者外的所有有效成员，true或false，默认为false
+     *
+     * - bid: string, 反垃圾业务ID，实现“单条消息配置对应反垃圾”，若不填则使用原来的反垃圾配置
+     *
+     * - useYidun: int, 单条消息是否使用易盾反垃圾，可选值为0。0：（在开通易盾的情况下）不使用易盾反垃圾而是使用通用反垃圾，包括自定义消息。
+     *   若不填此字段，即在默认情况下，若应用开通了易盾反垃圾功能，则使用易盾反垃圾来进行垃圾消息的判断
+     *
+     * - markRead: int, 群消息是否需要已读业务（仅对群消息有效），0:不需要，1:需要
+     *
+     * - checkFriend: bool, 是否为好友关系才发送消息，默认false，注：使用该参数需要先开通功能服务
+     *
+     * @param string $pushcontent 推送文案,最长500个字符,为空则不推送，写入内容则推送
      *
      * @return array
+     * @return array|mixed
      * @throws GuzzleException
-     * @throws YunXinArgExcetption
      * @throws YunXinBusinessException
      * @throws YunXinInnerException
      * @throws YunXinNetworkException
      */
-    private function sendMsg($accidFrom, $accidTo, $open, $type, $body, $antispam = false, array $antispamCustom = [],
-                             $option = '', $pushContent = '', $payload = [], $ext = '', array $forcePushList = [], $forcePushContent = '',
-                             $forcePushAll = false, $bid = '', $useYidun = null, $markRead = 0, $checkFriend = false)
+    public function sendMsg(string $from, int $ope, string $to, int $type, string $body, array $options = [], string $pushcontent = '')
     {
-        if (!$accidFrom || !is_string($accidFrom)) {
-            throw new YunXinArgExcetption('发送者id不能为空！');
-        }
-        if (strlen($accidFrom) > self::ACCID_LEGAL_LENGTH) {
-            throw new YunXinArgExcetption('发送者id超过限制！');
-        }
-        if (!$accidTo || !is_string($accidTo)) {
-            throw new YunXinArgExcetption('接受者id不能为空！');
-        }
-        if (strlen($accidTo) > self::ACCID_LEGAL_LENGTH) {
-            throw new YunXinArgExcetption('接受者id超过限制！');
-        }
-
-        if (strlen($body) > self::CHAT_MSG_BODY_LIMIT) {
-            throw new YunXinArgExcetption('body内容超过限制！');
-        }
-        $openLegalArr = [self::CHAT_ONT_TO_ONE, self::CHAT_ONT_TO_GROUP];
-        if (!in_array($open, $openLegalArr)) {
-            throw new YunXinArgExcetption('send msg open参数不合法');
-        }
-
-        return $this->sendRequest('msg/sendMsg.action', [
-            'from' => $accidFrom,
-            'ope' => $open,
-            'to' => $accidTo,
+        $data = [
+            'from' => $from,
+            'ope' => $ope,
+            'to' => $to,
             'type' => $type,
             'body' => $body,
-            'antispam' => $antispam,
-            'antispamCustom' => $antispamCustom,
-            'option' => $option,
-            'pushcontent' => $pushContent,
-            'payload' => json_encode($payload),
-            'ext' => $ext,
-            'forcepushlist' => json_encode($forcePushList),
-            'forcepushcontent' => $forcePushContent,
-            'forcepushall' => $forcePushAll,
-            'bid' => $bid,
-            'useYidun' => $useYidun,
-            'markRead' => $markRead,
-            'checkFriend' => $checkFriend,
-        ]);
-    }
+        ];
 
-    /**
-     * 发送文本消息
-     *
-     * @param $accidFrom
-     * @param $to
-     * @param int $open 0：点对点个人消息，1：群消息（高级群），其他返回414
-     * @param string $text
-     * @param bool $antispam
-     * @param array $antispamCustom
-     * @param string $option
-     * @param string $pushContent
-     * @param array $payload
-     * @param $ext
-     * @param array $forcePushList
-     * @param $forcePushContent
-     * @param $forcePushAll
-     * @param $bid
-     * @param $useYidun
-     * @param $markRead
-     * @param $checkFriend
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendTextMsg($accidFrom, $to, $open, $text, $antispam = false, array $antispamCustom = [],
-                                $option = '', $pushContent = '', $payload = [], $ext = '', array $forcePushList = [], $forcePushContent = '',
-                                $forcePushAll = false, $bid = '', $useYidun = null, $markRead = 0, $checkFriend = false)
-    {
-        $body = json_encode([
-            'msg' => $text,
-        ]);
-
-        return $this->sendMsg(
-            $accidFrom,
-            $to,
-            $open,
-            self::CHAT_TYPE_TEXT,
-            $body,
-            $antispam,
-            $antispamCustom,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $forcePushList,
-            $forcePushContent,
-            $forcePushAll,
-            $bid,
-            $useYidun,
-            $markRead,
-            $checkFriend
-        );
-    }
-
-    /**
-     * 发送图片消息
-     *
-     * @param string $accidFrom
-     * @param string $to
-     * @param int $open
-     * @param string $picName
-     * @param string $picMD5
-     * @param string $picUrl
-     * @param string $picExt etc:jpg
-     * @param int $picWidth
-     * @param int $picHeight
-     * @param int $picSize
-     * @param bool $antispam
-     * @param array $antispamCustom
-     * @param $option
-     * @param $pushContent
-     * @param $payload
-     * @param $ext
-     * @param array $forcePushList
-     * @param $forcePushContent
-     * @param $forcePushAll
-     * @param $bid
-     * @param $useYidun
-     * @param $markRead
-     * @param $checkFriend
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendPictureMsg($accidFrom, $to, $open,
-                                   $picName, $picMD5, $picUrl, $picExt, $picWidth, $picHeight, $picSize,
-                                   $antispam = false, array $antispamCustom = [],
-                                   $option = '', $pushContent = '', $payload = [], $ext = '', array $forcePushList = [], $forcePushContent = '',
-                                   $forcePushAll = false, $bid = '', $useYidun = null, $markRead = 0, $checkFriend = false)
-    {
-        $picWidth = intval($picWidth);
-        $picHeight = intval($picHeight);
-        $picSize = intval($picSize);
-
-        if (!$picWidth || $picHeight) {
-            throw new YunXinArgExcetption('图片宽度和高度不能为0！');
-        }
-        if (!$picSize) {
-            throw new YunXinArgExcetption('图片尺寸不能为0！');
+        if (!empty($pushcontent)) {
+            $data['pushcontent'] = $pushcontent;
         }
 
-        $body = json_encode([
-            "name" => $picName,   // 图片name
-            "md5" => $picMD5,    // 图片文件md5
-            "url" => $picUrl,    // 生成的url
-            "ext" => $picExt,    // 图片后缀
-            "w" => $picWidth,    // 宽
-            "h" => $picHeight,    // 高
-            "size" => $picSize    // 图片大小
-        ]);
-
-        return $this->sendMsg(
-            $accidFrom,
-            $to,
-            $open,
-            self::CHAT_TYPE_PICTURE,
-            $body,
-            $antispam,
-            $antispamCustom,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $forcePushList,
-            $forcePushContent,
-            $forcePushAll,
-            $bid,
-            $useYidun,
-            $markRead,
-            $checkFriend
-        );
-    }
-
-    /**
-     * 发送语音消息
-     *
-     * @param string $accidFrom
-     * @param string $to
-     * @param int $open
-     * @param int $audioDur
-     * @param string $audioMD5
-     * @param string $audioUrl
-     * @param string $audioExt
-     * @param int $audioSize
-     * @param bool $antispam
-     * @param array $antispamCustom
-     * @param string $option
-     * @param string $pushContent
-     * @param array $payload
-     * @param $ext
-     * @param array $forcePushList
-     * @param $forcePushContent
-     * @param $forcePushAll
-     * @param $bid
-     * @param $useYidun
-     * @param $markRead
-     * @param $checkFriend
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendAudioMsg($accidFrom, $to, $open,
-                                 $audioDur, $audioMD5, $audioUrl, $audioExt, $audioSize,
-                                 $antispam = false, array $antispamCustom = [],
-                                 $option = '', $pushContent = '', $payload = [], $ext = '', array $forcePushList = [], $forcePushContent = '',
-                                 $forcePushAll = false, $bid = '', $useYidun = null, $markRead = 0, $checkFriend = false)
-    {
-        $audioDur = intval($audioDur);
-        $audioSize = intval($audioSize);
-
-        if (!$audioDur) {
-            throw new YunXinArgExcetption('语音时长不能为0！');
-        }
-        if (!$audioSize) {
-            throw new YunXinArgExcetption('语音文件尺寸不能为0！');
-        }
-        if (!is_string($audioExt) || $audioExt != 'aac') {
-            throw new YunXinArgExcetption('语音文件后缀只能为acc！');
-        }
-
-        $body = json_encode([
-            "dur" => $audioDur,   // 语音持续时长ms
-            "md5" => $audioMD5,    // 语音文件的md5值
-            "url" => $audioUrl,    // 生成的url
-            "ext" => $audioExt,    // 语音消息格式，只能是aac格式
-            "size" => $audioSize    // 语音文件大小
-        ]);
-
-        return $this->sendMsg(
-            $accidFrom,
-            $to,
-            $open,
-            self::CHAT_TYPE_AUDIO,
-            $body,
-            $antispam,
-            $antispamCustom,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $forcePushList,
-            $forcePushContent,
-            $forcePushAll,
-            $bid,
-            $useYidun,
-            $markRead,
-            $checkFriend
-        );
-    }
-
-    /**
-     * 发送视频消息
-     *
-     * @param $accidFrom
-     * @param $to
-     * @param $open
-     * @param int $videoDur /视频持续时长ms
-     * @param $videoMD5
-     * @param $videoUrl
-     * @param $videoExt
-     * @param int $videoWidth
-     * @param int $videoHeight
-     * @param int $videoSize
-     * @param bool $antispam
-     * @param array $antispamCustom
-     * @param string $option
-     * @param string $pushContent
-     * @param array $payload
-     * @param string $ext
-     * @param array $forcePushList
-     * @param string $forcePushContent
-     * @param bool $forcePushAll
-     * @param string $bid
-     * @param $useYidun
-     * @param int $markRead
-     * @param bool $checkFriend
-     *
-     * @return array
-     * @throws GuzzleException
-     * @throws YunXinArgExcetption
-     * @throws YunXinBusinessException
-     * @throws YunXinInnerException
-     * @throws YunXinNetworkException
-     */
-    public function sendVideoMsg($accidFrom, $to, $open,
-                                 $videoDur, $videoMD5, $videoUrl, $videoExt, $videoWidth, $videoHeight, $videoSize,
-                                 $antispam = false, array $antispamCustom = [],
-                                 $option = '', $pushContent = '', $payload = [], $ext = '', array $forcePushList = [], $forcePushContent = '',
-                                 $forcePushAll = false, $bid = '', $useYidun = null, $markRead = 0, $checkFriend = false)
-    {
-        $videoDur = intval($videoDur);
-        $videoWidth = intval($videoWidth);
-        $videoHeight = intval($videoHeight);
-        $videoSize = intval($videoSize);
-
-        if (!$videoDur) {
-            throw new YunXinArgExcetption('视频时长不能为0！');
-        }
-        if (!$videoWidth || $videoHeight) {
-            throw new YunXinArgExcetption('视频宽度和高度不能为0！');
-        }
-        if (!$videoSize) {
-            throw new YunXinArgExcetption('视频文件尺寸不能为0！');
-        }
-
-        $body = json_encode([
-            "dur" => $videoDur,   // 视频name
-            "md5" => $videoMD5,    // 视频文件md5
-            "url" => $videoUrl,    // 生成的url
-            "ext" => $videoExt,    // 视频后缀
-            "w" => $videoWidth,    // 宽
-            "h" => $videoHeight,    // 高
-            "size" => $videoSize    // 视频大小
-        ]);
-
-        return $this->sendMsg(
-            $accidFrom,
-            $to,
-            $open,
-            self::CHAT_TYPE_VIDEO,
-            $body,
-            $antispam,
-            $antispamCustom,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $forcePushList,
-            $forcePushContent,
-            $forcePushAll,
-            $bid,
-            $useYidun,
-            $markRead,
-            $checkFriend
-        );
-    }
-
-    /**
-     * 发送地理位置消息
-     *
-     * @param string $accidFrom
-     * @param string $to
-     * @param $open
-     * @param $title
-     * @param $lng
-     * @param $lat
-     * @param $antispam
-     * @param array $antispamCustom
-     * @param $option
-     * @param $pushContent
-     * @param $payload
-     * @param $ext
-     * @param array $forcePushList
-     * @param $forcePushContent
-     * @param $forcePushAll
-     * @param $bid
-     * @param $useYidun
-     * @param $markRead
-     * @param $checkFriend
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendPositionMsg($accidFrom, $to, $open,
-                                    $title, $lng, $lat,
-                                    $antispam = false, array $antispamCustom = [],
-                                    $option = '', $pushContent = '', $payload = [], $ext = '', array $forcePushList = [], $forcePushContent = '',
-                                    $forcePushAll = false, $bid = '', $useYidun = null, $markRead = 0, $checkFriend = false)
-    {
-
-        $body = json_encode([
-            'title' => $title,
-            'lng' => $lng, // 经度
-            'lat' => $lat, // 纬度
-        ]);
-
-        return $this->sendMsg(
-            $accidFrom,
-            $to,
-            $open,
-            self::CHAT_TYPE_POSITION,
-            $body,
-            $antispam,
-            $antispamCustom,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $forcePushList,
-            $forcePushContent,
-            $forcePushAll,
-            $bid,
-            $useYidun,
-            $markRead,
-            $checkFriend
-        );
-    }
-
-    /**
-     * 发送文件消息
-     *
-     * @param string $accidFrom
-     * @param string $to
-     * @param $open
-     * @param $fileName
-     * @param $fileMD5
-     * @param $fileUrl
-     * @param $fileExt
-     * @param $fileSize
-     * @param $antispam
-     * @param array $antispamCustom
-     * @param $option
-     * @param $pushContent
-     * @param $payload
-     * @param $ext
-     * @param array $forcePushList
-     * @param $forcePushContent
-     * @param $forcePushAll
-     * @param $bid
-     * @param $useYidun
-     * @param $markRead
-     * @param $checkFriend
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendFileMsg($accidFrom, $to, $open,
-                                $fileName, $fileMD5, $fileUrl, $fileExt, $fileSize,
-                                $antispam = false, array $antispamCustom = [],
-                                $option = '', $pushContent = '', $payload = [], $ext = '', array $forcePushList = [], $forcePushContent = '',
-                                $forcePushAll = false, $bid = '', $useYidun = null, $markRead = 0, $checkFriend = false)
-    {
-        $fileSize = intval($fileSize);
-
-        if (!$fileSize) {
-            throw new YunXinArgExcetption('文件尺寸不能为0！');
-        }
-
-        $body = json_encode([
-            "name" => $fileName,   // 文件name
-            "md5" => $fileMD5,    // 文件md5
-            "url" => $fileUrl,    // 生成的url
-            "ext" => $fileExt,    // 文件后缀
-            "size" => $fileSize    // 文件大小
-        ]);
-
-        return $this->sendMsg(
-            $accidFrom,
-            $to,
-            $open,
-            self::CHAT_TYPE_FILE,
-            $body,
-            $antispam,
-            $antispamCustom,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $forcePushList,
-            $forcePushContent,
-            $forcePushAll,
-            $bid,
-            $useYidun,
-            $markRead,
-            $checkFriend
-        );
-    }
-
-    /**
-     * 发送自定义消息
-     *
-     * @param string $accidFrom
-     * @param string $accidTo
-     * @param $open
-     * @param array $arr
-     * @param $antispam
-     * @param array $antispamCustom
-     * @param $option
-     * @param $pushContent
-     * @param $payload
-     * @param $ext
-     * @param array $forcePushList
-     * @param $forcePushContent
-     * @param $forcePushAll
-     * @param $bid
-     * @param $useYidun
-     * @param $markRead
-     * @param $checkFriend
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendCustomMsg($accidFrom, $accidTo, $open,
-                                  array $arr,
-                                  $antispam, array $antispamCustom = [],
-                                  $option = '', $pushContent = '', $payload = [], $ext = '', array $forcePushList = [], $forcePushContent = '',
-                                  $forcePushAll = false, $bid = '', $useYidun = null, $markRead = 0, $checkFriend = false)
-    {
-
-        return $this->sendMsg(
-            $accidFrom,
-            $accidTo,
-            $open,
-            self::CHAT_TYPE_CUSTOM,
-            json_encode($arr),
-            $antispam,
-            $antispamCustom,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $forcePushList,
-            $forcePushContent,
-            $forcePushAll,
-            $bid,
-            $useYidun,
-            $markRead,
-            $checkFriend
-        );
+        return $this->sendRequest('msg/sendMsg.action', array_merge($options, $data));
     }
 
     /**
      * 批量发送点对点普通消息
      *
-     * @param $accidFrom
-     * @param array $accidsTo
-     * @param $type
-     * @param $body
-     * @param $option
-     * @param $pushContent
-     * @param $payload
-     * @param $ext
-     * @param $bid
-     * @param int $useYidun
-     * @param $returnMsgid
+     * @param string $fromAccid 发送者accid，用户帐号，最大32字符，必须保证一个APP内唯一
+     * @param array $toAccids 接受者数组，限500人
+     * @param int $type 消息类型 对应self::MSG_TYPE_*
+     * @param string $body 消息内容，最大长度5000字符，JSON格式
+     * @param array $options 可选参数，支持如下
+     * @param string $pushcontent
      *
-     * @return array
-     * @throws YunXinArgExcetption
+     * - option: string, 指定消息的漫游，存云端历史，发送方多端同步，推送，消息抄送等特殊行为,使用 self::chatOption
+     *
+     * - pushcontent: string, 推送文案,最长500个字符，android以此为推送显示文案；ios若未填写payload，显示文案以pushcontent为准
+     *
+     * - payload: sting, ios 推送对应的payload,必须是JSON,不能超过2k字符
+     *
+     * - ext: string, 开发者扩展字段，长度限制1024字符
+     *
+     * - bid: string, 反垃圾业务ID，实现“单条消息配置对应反垃圾”，若不填则使用原来的反垃圾配置
+     *
+     * - useYidun: int, 单条消息是否使用易盾反垃圾，可选值为0。0：（在开通易盾的情况下）不使用易盾反垃圾而是使用通用反垃圾，包括自定义消息。
+     *   若不填此字段，即在默认情况下，若应用开通了易盾反垃圾功能，则使用易盾反垃圾来进行垃圾消息的判断
+     *
+     * @return array|mixed
      * @throws GuzzleException
      * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
+     * @throws YunXinInnerException
+     * @throws YunXinNetworkException
      */
-    private function sendBatchMsg($accidFrom, array $accidsTo, $type, $body,
-                                  $option = '', $pushContent = '', $payload = [], $ext = '',
-                                  $bid = '', $useYidun = null, $returnMsgid = false)
+    public function sendBatchMsg(string $fromAccid, array $toAccids, int $type, string $body, array $options = [], string $pushcontent = '')
     {
-        if (!$accidFrom || !is_string($accidFrom)) {
-            throw new YunXinArgExcetption('发送者id不能为空！');
-        }
-        if (strlen($accidFrom) > self::ACCID_LEGAL_LENGTH) {
-            throw new YunXinArgExcetption('发送者id超过限制！');
-        }
-        if (empty($accidsTo)) {
-            throw new YunXinArgExcetption('接受者id组不能为空！');
-        }
-        if (count($accidsTo) > self::CHAT_SEND_LIMIT) {
-            throw new YunXinArgExcetption('接受者人数'.count($accidsTo).'超过限制！');
-        }
-        if (strlen($body) > self::CHAT_MSG_BODY_LIMIT) {
-            throw new YunXinArgExcetption('body内容超过限制！');
-        }
-
-        return $this->sendRequest('msg/sendBatchMsg.action', [
-            'fromAccid' => $accidFrom,
-            'toAccids' => json_encode($accidsTo),
+        $data = [
+            'fromAccid' => $fromAccid,
+            'toAccids' => json_encode($toAccids),
             'type' => $type,
             'body' => $body,
-            'option' => $option,
-            'pushcontent' => $pushContent,
-            'payload' => json_encode($payload),
-            'ext' => $ext,
-            'bid' => $bid,
-            'useYidun' => $useYidun,
-            'returnMsgid' => $returnMsgid,
-        ]);
-    }
+        ];
 
-    /**
-     * 批量发送文本消息
-     *
-     * @param $accidFrom
-     * @param array $accidsTo
-     * @param $text
-     * @param $option
-     * @param $pushContent
-     * @param $payload
-     * @param $ext
-     * @param $bid
-     * @param int $useYidun
-     * @param $returnMsgid
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendTextBatchMsg($accidFrom, array $accidsTo, $text,
-                                     $option = '', $pushContent = '', $payload = [], $ext = '',
-                                     $bid = '', $useYidun = null, $returnMsgid = false)
-    {
-        $body = json_encode([
-            'msg' => $text,
-        ]);
-
-        return $this->sendBatchMsg(
-            $accidFrom,
-            $accidsTo,
-            self::CHAT_TYPE_TEXT,
-            $body,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $bid,
-            $useYidun,
-            $returnMsgid
-        );
-    }
-
-    /**
-     * 发送批量图片消息
-     *
-     * @param $accidFrom
-     * @param array $accidsTo
-     * @param $picName
-     * @param $picMD5
-     * @param $picUrl
-     * @param $picExt
-     * @param $picWidth
-     * @param $picHeight
-     * @param $picSize
-     * @param string $option
-     * @param string $pushContent
-     * @param array $payload
-     * @param string $ext
-     * @param string $bid
-     * @param int $useYidun
-     * @param bool $returnMsgid
-     *
-     * @return array
-     * @throws GuzzleException
-     * @throws YunXinArgExcetption
-     * @throws YunXinBusinessException
-     * @throws YunXinInnerException
-     * @throws YunXinNetworkException
-     */
-    public function sendPictureBatchMsg($accidFrom, array $accidsTo,
-                                        $picName, $picMD5, $picUrl, $picExt, $picWidth, $picHeight, $picSize,
-                                        $option = '', $pushContent = '', $payload = [], $ext = '',
-                                        $bid = '', $useYidun = null, $returnMsgid = false)
-    {
-        $picWidth = intval($picWidth);
-        $picHeight = intval($picHeight);
-        $picSize = intval($picSize);
-
-        if (!$picWidth || $picHeight) {
-            throw new YunXinArgExcetption('图片宽度和高度不能为0！');
-        }
-        if (!$picSize) {
-            throw new YunXinArgExcetption('图片尺寸不能为0！');
+        if (!empty($pushcontent)) {
+            $data['pushcontent'] = $pushcontent;
         }
 
-        $body = json_encode([
-            "name" => $picName,   // 图片name
-            "md5" => $picMD5,    // 图片文件md5
-            "url" => $picUrl,    // 生成的url
-            "ext" => $picExt,    // 图片后缀
-            "w" => $picWidth,    // 宽
-            "h" => $picHeight,    // 高
-            "size" => $picSize    // 图片大小
-        ]);
-
-        return $this->sendBatchMsg(
-            $accidFrom,
-            $accidsTo,
-            self::CHAT_TYPE_PICTURE,
-            $body,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $bid,
-            $useYidun,
-            $returnMsgid
-        );
-    }
-
-    /**
-     * 发送批量语音消息
-     *
-     * @param $accidFrom
-     * @param array $accidsTo
-     * @param $audioDur
-     * @param $audioMD5
-     * @param $audioUrl
-     * @param $audioExt
-     * @param $audioSize
-     * @param $option
-     * @param $pushContent
-     * @param $payload
-     * @param $ext
-     * @param $bid
-     * @param int $useYidun
-     * @param $returnMsgid
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendAudioBatchMsg($accidFrom, array $accidsTo,
-                                      $audioDur, $audioMD5, $audioUrl, $audioExt, $audioSize,
-                                      $option = '', $pushContent = '', $payload = [], $ext = '',
-                                      $bid = '', $useYidun = null, $returnMsgid = false)
-    {
-        $audioDur = intval($audioDur);
-        $audioSize = intval($audioSize);
-
-        if (!$audioDur) {
-            throw new YunXinArgExcetption('语音时长不能为0！');
-        }
-        if (!$audioSize) {
-            throw new YunXinArgExcetption('语音文件尺寸不能为0！');
-        }
-        if (!is_string($audioExt) || $audioExt != 'aac') {
-            throw new YunXinArgExcetption('语音文件后缀只能为acc！');
-        }
-
-        $body = json_encode([
-            "dur" => $audioDur,   // 语音持续时长ms
-            "md5" => $audioMD5,    // 语音文件的md5值
-            "url" => $audioUrl,    // 生成的url
-            "ext" => $audioExt,    // 语音消息格式，只能是aac格式
-            "size" => $audioSize    // 语音文件大小
-        ]);
-
-        return $this->sendBatchMsg(
-            $accidFrom,
-            $accidsTo,
-            self::CHAT_TYPE_AUDIO,
-            $body,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $bid,
-            $useYidun,
-            $returnMsgid
-        );
-    }
-
-    /**
-     * 发送批量视频消息
-     *
-     * @param $accidFrom
-     * @param array $accidsTo
-     * @param $videoDur
-     * @param $videoMD5
-     * @param $videoUrl
-     * @param $videoExt
-     * @param $videoWidth
-     * @param $videoHeight
-     * @param $videoSize
-     * @param $option
-     * @param $pushContent
-     * @param $payload
-     * @param $ext
-     * @param $bid
-     * @param $useYidun
-     * @param $returnMsgid
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendVideoBatchMsg($accidFrom, array $accidsTo,
-                                      $videoDur, $videoMD5, $videoUrl, $videoExt, $videoWidth, $videoHeight, $videoSize,
-                                      $option = '', $pushContent = '', $payload = [], $ext = '',
-                                      $bid = '', $useYidun = null, $returnMsgid = false)
-    {
-        $videoDur = intval($videoDur);
-        $videoWidth = intval($videoWidth);
-        $videoHeight = intval($videoHeight);
-        $videoSize = intval($videoSize);
-
-        if (!$videoDur) {
-            throw new YunXinArgExcetption('视频时长不能为0！');
-        }
-        if (!$videoWidth || $videoHeight) {
-            throw new YunXinArgExcetption('视频宽度和高度不能为0！');
-        }
-        if (!$videoSize) {
-            throw new YunXinArgExcetption('视频文件尺寸不能为0！');
-        }
-
-        $body = json_encode([
-            "dur" => $videoDur,   // 视频name
-            "md5" => $videoMD5,    // 视频文件md5
-            "url" => $videoUrl,    // 生成的url
-            "ext" => $videoExt,    // 视频后缀
-            "w" => $videoWidth,    // 宽
-            "h" => $videoHeight,    // 高
-            "size" => $videoSize    // 视频大小
-        ]);
-
-        return $this->sendBatchMsg(
-            $accidFrom,
-            $accidsTo,
-            self::CHAT_TYPE_VIDEO,
-            $body,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $bid,
-            $useYidun,
-            $returnMsgid
-        );
-    }
-
-    /**
-     * 发送批量地理位置消息
-     *
-     * @param $accidFrom
-     * @param array $accidsTo
-     * @param $title
-     * @param $lng
-     * @param $lat
-     * @param $option
-     * @param $pushContent
-     * @param $payload
-     * @param $ext
-     * @param $bid
-     * @param $useYidun
-     * @param $returnMsgid
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendPositionBatchMsg($accidFrom, array $accidsTo,
-                                         $title, $lng, $lat,
-                                         $option = '', $pushContent = '', $payload = [], $ext = '',
-                                         $bid = '', $useYidun = null, $returnMsgid = false)
-    {
-        $body = json_encode([
-            'title' => $title,
-            'lng' => $lng, // 经度
-            'lat' => $lat, // 纬度
-        ]);
-
-        return $this->sendBatchMsg(
-            $accidFrom,
-            $accidsTo,
-            self::CHAT_TYPE_POSITION,
-            $body,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $bid,
-            $useYidun,
-            $returnMsgid
-        );
-    }
-
-    /**
-     * 发送文件消息
-     *
-     * @param $accidFrom
-     * @param array $accidsTo
-     * @param $fileName
-     * @param $fileMD5
-     * @param $fileUrl
-     * @param $fileExt
-     * @param $fileSize
-     * @param string $option
-     * @param string $pushContent
-     * @param array $payload
-     * @param string $ext
-     * @param string $bid
-     * @param $useYidun
-     * @param bool $returnMsgid
-     *
-     * @return array
-     * @throws GuzzleException
-     * @throws YunXinArgExcetption
-     * @throws YunXinBusinessException
-     * @throws YunXinInnerException
-     * @throws YunXinNetworkException
-     */
-    public function sendFileBatchMsg($accidFrom, array $accidsTo,
-                                     $fileName, $fileMD5, $fileUrl, $fileExt, $fileSize,
-                                     $option = '', $pushContent = '', $payload = [], $ext = '',
-                                     $bid = '', $useYidun = null, $returnMsgid = false)
-    {
-        $fileSize = intval($fileSize);
-
-        if (!$fileSize) {
-            throw new YunXinArgExcetption('文件尺寸不能为0！');
-        }
-
-        $body = json_encode([
-            "name" => $fileName,   // 文件name
-            "md5" => $fileMD5,    // 文件md5
-            "url" => $fileUrl,    // 生成的url
-            "ext" => $fileExt,    // 文件后缀
-            "size" => $fileSize    // 文件大小
-        ]);
-
-        return $this->sendBatchMsg(
-            $accidFrom,
-            $accidsTo,
-            self::CHAT_TYPE_FILE,
-            $body,
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $bid,
-            $useYidun,
-            $returnMsgid
-        );
-    }
-
-    /**
-     * 发送自定义消息
-     *
-     * @param $accidFrom
-     * @param array $accidsTo
-     * @param array $arr
-     * @param string $option
-     * @param string $pushContent
-     * @param array $payload
-     * @param string $ext
-     * @param string $bid
-     * @param $useYidun
-     * @param bool $returnMsgid
-     *
-     * @return array
-     * @throws GuzzleException
-     * @throws YunXinArgExcetption
-     * @throws YunXinBusinessException
-     * @throws YunXinInnerException
-     * @throws YunXinNetworkException
-     */
-    public function sendCustomBatchMsg($accidFrom, array $accidsTo,
-                                       array $arr,
-                                       $option = '', $pushContent = '', $payload = [], $ext = '',
-                                       $bid = '', $useYidun = null, $returnMsgid = false)
-    {
-        return $this->sendBatchMsg(
-            $accidFrom,
-            $accidsTo,
-            self::CHAT_TYPE_CUSTOM,
-            json_encode($arr),
-            $option,
-            $pushContent,
-            $payload,
-            $ext,
-            $bid,
-            $useYidun,
-            $returnMsgid
-        );
-    }
-
-    /**
-     * 验证参数
-     *
-     * @param $from
-     * @param $msgType
-     * @param $attachStr
-     * @param $pushContent
-     * @param $payload
-     * @param $save
-     *
-     * @throws YunXinArgExcetption
-     */
-    private function verifyAttachMsg($from, $msgType,
-                                     $attachStr, $pushContent, $payload, $save)
-    {
-        $msgLegalTypes = [self::CHAT_ONT_TO_ONE, self::CHAT_ONT_TO_GROUP];
-        $saveLegalTypes = [1, 2];
-        $msgType = intval($msgType);
-
-        if (empty($from)) {
-            throw new YunXinArgExcetption('发送者id不能为空！');
-        }
-        if (strlen($from) > self::ACCID_LEGAL_LENGTH) {
-            throw new YunXinArgExcetption('发送者id超过限制！');
-        }
-        if (!in_array($msgType, $msgLegalTypes)) {
-            throw new YunXinArgExcetption('msgtype不合法！');
-        }
-        if (!in_array($save, $saveLegalTypes)) {
-            throw new YunXinArgExcetption('save类型不合法！');
-        }
-        if (empty($attachStr)) {
-            throw new YunXinArgExcetption('attach内容不能为空！');
-        }
-        if (strlen($pushContent) > self::CHAT_ATTACH_MSG_PUSH_CONTENT_LIMIT) {
-            throw new YunXinArgExcetption('推送内容不超过500字符！');
-        }
-
-        if (strlen($attachStr) > self::CHAT_ATTACH_MSG_ATTACH_LIMIT) {
-            throw new YunXinArgExcetption('attach内容最大长度4096字符！');
-        }
-        if (strlen($payload) > self::CHAT_ATTACH_MSG_PAYLOAD_LIMIT) {
-            throw new YunXinArgExcetption('payload不超过2k字符！');
-        }
+        return $this->sendRequest('msg/sendBatchMsg.action', array_merge($options, $data));
     }
 
     /**
      * 发送自定义系统通知
      *
-     * @param $from
-     * @param $msgType
-     * @param $to
-     * @param array $attach
-     * @param $pushContent
-     * @param $payload
-     * @param $sound
-     * @param $save
-     * @param $option
+     * @param string $from 发送者accid，用户帐号，最大32字符，APP内唯一
+     * @param int $msgtype 消息类型，0：点对点自定义通知，1：群消息自定义通知，其他返回414
+     * @param string $to msgtype==0是表示accid即用户id，msgtype==1表示tid即群id
+     * @param string $attach 自定义通知内容，第三方组装的字符串，建议是JSON串，最大长度4096字符
+     * @param array $options 可选参数集合，支持如下：
      *
-     * @return array
-     * @throws YunXinArgExcetption
+     * - option: string, 指定消息计数等特殊行为,使用 self::noticeOption生成
+     *
+     * - pushcontent: string, 推送文案,最长500个字符，android以此为推送显示文案；ios若未填写payload，显示文案以pushcontent为准
+     *
+     * - payload: sting, ios 推送对应的payload,必须是JSON,不能超过2k字符
+     *
+     * - sound: string, 如果有指定推送，此属性指定为客户端本地的声音文件名，长度不要超过30个字符，如果不指定，会使用默认声音
+     *
+     * - save: int, 1表示只发在线，2表示会存离线，其他会报414错误。默认会存离线
+     *
+     * @return array|mixed
      * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function sendAttachMsg($from, $msgType, $to,
-                                  array $attach,
-                                  $pushContent = '', $payload = [], $sound = '', $save = 2, $option = '')
-    {
-        $attachStr = '';
-        if ($attach) {
-            $attachStr = json_encode($attach);
-        }
-        $save = intval($save);
-        if (!$save) {
-            $save = 2;
-        }
-        $this->verifyAttachMsg($from, $msgType,
-            $attachStr, $pushContent, $payload, $save);
-        if (!$to || !is_string($to)) {
-            throw new YunXinArgExcetption('接受者id不能为空！');
-        }
-        if (strlen($to) > self::ACCID_LEGAL_LENGTH) {
-            throw new YunXinArgExcetption('接受者id超过限制！');
-        }
-
-        return $this->sendRequest('msg/sendAttachMsg.action', [
-            'from' => $from,
-            'msgtype' => $msgType,
-            'to' => $to,
-            'attach' => $attachStr,
-            'pushcontent' => $pushContent,
-            'payload' => $payload,
-            'sound' => $sound,
-            'save' => $save,
-            'option' => $option,
-        ]);
-    }
-
-    /**
-     * 批量发送自定义系统通知
-     *
-     * @param $from
-     * @param array $toAccids
-     * @param array $attach
-     * @param string $pushContent
-     * @param array $payload
-     * @param string $sound
-     * @param int $save
-     * @param string $option
-     *
-     * @return array
-     * @throws GuzzleException
-     * @throws YunXinArgExcetption
      * @throws YunXinBusinessException
      * @throws YunXinInnerException
      * @throws YunXinNetworkException
      */
-    public function sendAttachBatchMsg($from, array $toAccids,
-                                       array $attach,
-                                       $pushContent = '', $payload = [], $sound = '', $save = 2, $option = '')
+    public function sendAttachMsg(string $from, int $msgtype, string $to, string $attach, array $options = [])
     {
-        $attachStr = '';
-        if ($attach) {
-            $attachStr = json_encode($attach);
-        }
-        $save = intval($save);
-        if (!$save) {
-            $save = 2;
-        }
-        $this->verifyAttachMsg($from, self::CHAT_ONT_TO_ONE,
-            $attachStr, $pushContent, $payload, $save);
-        if (empty($toAccids)) {
-            throw new YunXinArgExcetption('接受者id组不能为空！');
-        }
-
-        return $this->sendRequest('msg/sendBatchAttachMsg.action', [
-            'fromAccid' => $from,
-            'toAccids' => json_encode($toAccids),
-            'attach' => $attachStr,
-            'pushcontent' => $pushContent,
-            'payload' => $payload,
-            'sound' => $sound,
-            'save' => $save,
-            'option' => $option,
-        ]);
-    }
-
-    /**
-     * 文件上传
-     *
-     * @param string $content
-     * @param string $type
-     * @param bool $isHttps
-     * @param int $expireSec
-     * @param string $tag
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function upload($content, $type, $isHttps = false, $expireSec = null, $tag = '')
-    {
-        if ($expireSec) {
-            $expireSec = intval($expireSec);
-        }
-        if ($expireSec > 0 && $expireSec < self::ONE_DAY_SECONDS) {
-            throw new YunXinArgExcetption('文件过期时间必须大于等于86400！');
-        }
-        $data = [
-            'content' => $content,
-            'type' => $type,
-            'ishttps' => $isHttps,
-            'tag' => $tag,
-        ];
-        if ($expireSec > 0) {
-            $data['expireSec'] = $expireSec;
-        }
-
-        return $this->sendRequest('msg/upload.action', $data);
-    }
-
-    /**
-     * 消息撤回
-     *
-     * @param string $deleteMsgid
-     * @param int $timetag
-     * @param int $type
-     * @param $from
-     * @param $to
-     * @param $msg
-     * @param $ignoreTime
-     * @param string $pushContent
-     * @param $payload
-     *
-     * @return array
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
-     */
-    public function recallMsg($deleteMsgid, $timetag, $type, $from, $to, $msg,
-                              $ignoreTime, $pushContent, $payload)
-    {
-        $typesLegal = [self::RECALL_TYPE_ONE_TO_ONE, self::RECALL_TYPE_ONE_TO_GROUP];
-        $type = intval($type);
-
-        if (empty($deleteMsgid)) {
-            throw new YunXinArgExcetption('撤回msg id不能为空！');
-        }
-        if (empty($timetag)) {
-            throw new YunXinArgExcetption('撤回msg创建时间不能为空！');
-        }
-        if (!in_array($type, $typesLegal)) {
-            throw new YunXinArgExcetption('撤回type错误！');
-        }
-        if (strlen($pushContent) > self::CHAT_ATTACH_MSG_PUSH_CONTENT_LIMIT) {
-            throw new YunXinArgExcetption('推送内容不超过500字符！');
-        }
-
-        return $this->sendRequest('msg/recall.action', [
-            'deleteMsgid' => $deleteMsgid,
-            'timetag' => $timetag,
-            'type' => $type,
+        return $this->sendRequest('msg/sendAttachMsg.action', array_merge($options, [
             'from' => $from,
+            'msgtype' => $msgtype,
             'to' => $to,
-            'msg' => $msg,
-            'ignoreTime' => $ignoreTime,
-            'pushcontent' => $pushContent,
-            'payload' => $payload,
+            'attach' => $attach,
+        ]));
+    }
+
+    /**
+     * 批量发送点对点自定义系统通知
+     *
+     * @param string $fromAccid 发送者accid，用户帐号，最大32字符，APP内唯一
+     * @param array $toAccids 接收者 最大限500人
+     * @param string $attach 自定义通知内容，第三方组装的字符串，建议是JSON串，最大长度4096字符
+     * @param array $options 可选参数集合，支持以下选项:
+     *
+     * - option: string, 指定消息计数等特殊行为,使用 self::noticeOption生成
+     *
+     * - pushcontent: string, 推送文案,最长500个字符，android以此为推送显示文案；ios若未填写payload，显示文案以pushcontent为准
+     *
+     * - payload: sting, ios 推送对应的payload,必须是JSON,不能超过2k字符
+     *
+     * - sound: string, 如果有指定推送，此属性指定为客户端本地的声音文件名，长度不要超过30个字符，如果不指定，会使用默认声音
+     *
+     * - save: int, 1表示只发在线，2表示会存离线，其他会报414错误。默认会存离线
+     *
+     * @return array|mixed
+     * @throws GuzzleException
+     * @throws YunXinBusinessException
+     * @throws YunXinInnerException
+     * @throws YunXinNetworkException
+     */
+    public function sendBatchAttachMsg(string $fromAccid, array $toAccids, string $attach, array $options = [])
+    {
+        return $this->sendRequest('msg/sendBatchAttachMsg.action', array_merge($options, [
+            'fromAccid' => $fromAccid,
+            'toAccids' => json_encode($toAccids),
+            'attach' => $attach,
+        ]));
+    }
+
+    /**
+     * 对在应用内的用户发送广播消息
+     *
+     * @param string $body 广播消息内容
+     * @param array $options 可选参数集合，支持以下选项:
+     *
+     * - from: string, 发送者accid, 用户帐号，最大长度32字符，必须保证一个APP内唯一
+     *
+     * - isOffline: bool, 是否存离线，true或false，默认false
+     *
+     * - ttl: int, 存离线状态下的有效期，单位小时，默认7天
+     *
+     * - targetOs: string, 目标客户端，默认所有客户端，jsonArray，例如 ["ios","aos","pc","web","mac"]
+     *
+     * @return array|mixed
+     * @throws GuzzleException
+     * @throws YunXinBusinessException
+     * @throws YunXinInnerException
+     * @throws YunXinNetworkException
+     */
+    public function broadcastMsg(string $body, array $options = [])
+    {
+        return $this->sendRequest('msg/broadcastMsg.action', array_merge($options, ['body' => $body]));
+    }
+
+    /**
+     * 生成文本消息
+     *
+     * @param string $msg
+     *
+     * @return string
+     */
+    public static function textFormat(string $msg):string
+    {
+        return json_encode(['msg' => $msg]);
+    }
+
+    /**
+     * 图片消息
+     *
+     * @param string $name
+     * @param string $md5
+     * @param string $url
+     * @param string $ext
+     * @param int $w
+     * @param int $h
+     * @param int $size
+     *
+     * @return string
+     */
+    public static function imageFormat(string $name, string $md5, string $url, string $ext, int $w, int $h, int $size):string
+    {
+        return json_encode([
+            'name' => $name,
+            'md5' => $md5,
+            'url' => $url,
+            'ext' => $ext,
+            'w' => $w,
+            'h' => $h,
+            'size' => $size,
         ]);
     }
 
     /**
-     * 发送广播消息
+     * 语音消息
      *
-     * @param $body
-     * @param $from
-     * @param bool $isOffline
-     * @param $ttl
-     * @param array $targetOs
+     * @param int $dur 时长ms
+     * @param string $md5 播放地址
+     * @param string $url
+     * @param int $size 文件大小
      *
-     * @return mixed
-     * @throws YunXinArgExcetption
-     * @throws GuzzleException
-     * @throws YunXinBusinessException
-     * @throws YunXinNetworkException|YunXinInnerException
+     * @return string
      */
-    public function broadcastMsg($body, $from, $isOffline = false, $ttl, array $targetOs)
+    public static function voiceFormat(int $dur, string $md5, string $url, int $size):string
     {
-        if (empty($body)) {
-            throw new YunXinArgExcetption('body不能为空！');
-        }
-        if (empty($from)) {
-            throw new YunXinArgExcetption('发送者id不能为空！');
-        }
+        return json_encode([
+            'dur' => $dur,
+            'md5' => $md5,
+            'url' => $url,
+            'ext' => 'acc', // 语音消息格式，只能是aac格式
+            'size' => $size,
+        ]);
+    }
 
-        $data = [
-            'body' => $body,
-            'from' => $from,
-            'isOffline' => $isOffline,
-            'ttl' => $ttl,
-        ];
-        if ($targetOs) {
-            $data['targetOs'] = json_encode($targetOs);
-        }
-        $res = $this->sendRequest('msg/broadcastMsg.action', $data);
-        return $res['msg'];
+    /**
+     * 视频消息
+     *
+     * @param int $dur 视频持续时长ms
+     * @param string $md5
+     * @param string $url 播放地址
+     * @param int $w 宽
+     * @param int $h 高
+     * @param string $ext 后缀名
+     * @param int $size 文件大小
+     *
+     * @return string
+     */
+    public static function videoFormat(int $dur, string $md5, string $url, int $w, int $h, string $ext, int $size):string
+    {
+        return json_encode([
+            'dur' => $dur,
+            'md5' => $md5,
+            'url' => $url,
+            'w' => $w,
+            'h' => $h,
+            'ext' => $ext,
+            'size' => $size,
+        ]);
+    }
+
+    /**
+     * 地理位置消息
+     *
+     * @param string $title 地理位置说明，例如：中国 浙江省 杭州市 网商路 599号
+     * @param string $lng 经度，例如 120.1908686708565
+     * @param string $lat 纬度，30.18704515647036
+     *
+     * @return string
+     */
+    public static function locationFormat(string $title, string $lng, string $lat):string
+    {
+        return json_encode(['title' => $title, 'lng' => $lng, 'lat' => $lat]);
+    }
+
+    /**
+     * 文件消息
+     *
+     * @param string $name 文件名
+     * @param string $md5
+     * @param string $url 地址
+     * @param string $ext 格式，例如ttf
+     * @param int $size 文件大小
+     *
+     * @return string
+     */
+    public static function fileFormat(string $name, string $md5, string $url, string $ext, int $size):string
+    {
+        return json_encode(['name' => $name, 'md5' => $md5, 'url' => $url, 'ext' => $ext, 'size' => $size]);
+    }
+
+    /**
+     * 系统通知的附加选项
+     *
+     * @param bool $route 该消息是否需要抄送第三方 (需要app开通消息抄送功能)
+     * @param bool $badge 该消息是否需要计入到未读计数中
+     * @param bool $needPushNick 推送文案是否需要带上昵称
+     *
+     * @return string
+     */
+    public static function noticeOption($route = false, $badge = true, $needPushNick = false):string
+    {
+        return json_encode(['route' => $route, 'badge' => $badge, 'needPushNick' => $needPushNick]);
+    }
+
+    /**
+     * 聊天消息附加选项
+     *
+     * @param bool $roam 该消息是否需要漫游（需要app开通漫游消息功能）
+     * @param bool $history 该消息是否存云端历史
+     * @param bool $sendersync 该消息是否需要发送方多端同步
+     * @param bool $push 该消息是否需要APNS推送或安卓系统通知栏推送
+     * @param bool $route 该消息是否需要抄送第三方 (需要app开通消息抄送功能)
+     * @param bool $badge 该消息是否需要计入到未读计数中
+     * @param bool $needPushNick 推送文案是否需要带上昵称
+     * @param bool $persistent 是否需要存离线消息
+     *
+     * @return string
+     */
+    public static function chatOption($roam = true, $history = false, $sendersync = false, $push = true, $route = false, $badge = true, $needPushNick = false, $persistent = true):string
+    {
+        return json_encode([
+            'roam' => $roam,
+            'history' => $history,
+            'sendersync' => $sendersync,
+            'push' => $push,
+            'route' => $route,
+            'badge' => $badge,
+            'needPushNick' => $needPushNick,
+            'persistent' => $persistent,
+        ]);
     }
 }
