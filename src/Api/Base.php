@@ -2,6 +2,7 @@
 
 namespace W1p\LumenYunxin\Api;
 
+use App\Jobs\YunxinQueue;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use W1p\LumenYunxin\Exception\YunXinBusinessException;
@@ -60,10 +61,32 @@ class Base
      */
     private $timeout = 5;
 
+    /**
+     * 此刻要发送的队列，空标识不发送队列
+     *
+     * @var string
+     */
+    protected $queue;
+
     public function __construct($appKey, $appSecrt)
     {
         $this->appKey = $appKey;
         $this->appSecrt = $appSecrt;
+    }
+
+    /**
+     * 设置本次消息发送为异步消息，消息将被推送到指定组件的队列中
+     * 异步发送时，所有接口都返回空值
+     *
+     * @param string $queue
+     *
+     * @return $this
+     */
+    public function async(string $queue)
+    {
+        $this->queue = $queue;
+
+        return $this;
     }
 
     /**
@@ -110,6 +133,12 @@ class Base
     protected function sendRequest($uri, array $data)
     {
         $this->checkSumBuilder();
+
+        if ($this->queue) {
+            dispatch((new YunxinQueue(['method' => $uri, 'data' => $data]))->onQueue($this->queue));
+            $this->queue = '';
+            return [];
+        }
 
         $client = new Client([
             // Base URI is used with relative requests
