@@ -3,6 +3,7 @@
 namespace W1p\LumenYunxin\Api;
 
 use App\Jobs\YunxinQueue;
+use Bschmitt\Amqp\Facades\Amqp;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use W1p\LumenYunxin\Exception\YunXinBusinessException;
@@ -135,7 +136,11 @@ class Base
         $this->checkSumBuilder();
 
         if ($this->queue) {
-            dispatch((new YunxinQueue(['method' => $uri, 'data' => $data]))->onQueue($this->queue));
+            Amqp::publish('yunxin-queue', json_encode($data), [
+                'queue' => 'yunxin-queue',
+                'exchange_type' => 'direct',
+                'exchange' => 'yunxin',
+            ]);
             $this->queue = '';
             return [];
         }
